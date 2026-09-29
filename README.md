@@ -2,7 +2,7 @@
 
 # 📦 ShipMate AI
 
-### Hybrid LLM & ML Logistics Triage Engine
+### Conversational, Agentic & Explainable AI for Logistics Support
 
 **Enterprise-ready AI support platform for European cross-border supply chain operations.**
 
@@ -26,9 +26,11 @@
 - [System Architecture](#-system-architecture)
 - [The Hybrid Intelligence Advantage](#-the-hybrid-intelligence-advantage)
 - [Features](#-features)
+- [Conversational, Agentic & Explainable AI](#-conversational-agentic--explainable-ai)
 - [Repository Structure](#-repository-structure)
 - [Quick Start](#-quick-start)
 - [Running Tests](#-running-tests)
+- [Evaluation](#-evaluation)
 - [Tech Stack](#-tech-stack)
 - [License](#-license)
 
@@ -39,6 +41,8 @@
 ShipMate AI decouples **subjective customer sentiment** from **quantitative carrier telemetry**.
 
 It pairs **Gemini Flash structured NLP** (which reads what the customer actually wants) with a **Scikit-Learn Random Forest classifier** (which predicts the real-time probability that a parcel breaches its SLA transit window). Support agents get both signals side by side, so urgency and risk are never confused with each other.
+
+On top of that sit **tool-using AI agents**: a customer chat assistant, a ticket investigation agent and an ops copilot. They decide which tools to call (carrier lookup, delay model, policies, CRM), queue any real-world action for **human approval**, and **explain every decision** with Shapley values, verbatim evidence and a decision trace.
 
 ---
 
@@ -143,9 +147,8 @@ Guardrails: a step limit, business-rule validators (voucher cap of EUR 200, mana
 ## 📁 Repository Structure
 
 ```text
-logistics-ai-triage/
+shipmate-ai/
 ├── app/
-│   ├── __init__.py
 │   ├── schemas.py            # Pydantic schemas & response contracts
 │   ├── llm_agent.py          # Gemini Flash structured extraction & drafting
 │   ├── mock_carrier_api.py   # CarrierClient interface + deterministic shipment simulator
@@ -165,6 +168,7 @@ logistics-ai-triage/
 ├── tests/
 │   ├── test_triage.py        # Carrier, ML and schema tests
 │   ├── test_explainability.py# Shapley, counterfactual, evidence and decision-trace tests
+│   ├── test_carrier_simulator.py # Determinism, scan history and not-found handling
 │   └── test_agent.py         # Agent loop tests with a scripted fake LLM
 ├── evals/
 │   ├── triage_cases.json     # 30 hand-labelled tickets
@@ -172,7 +176,6 @@ logistics-ai-triage/
 │   └── results/latest.md     # Latest evaluation report
 ├── streamlit_app.py          # Unified interactive Streamlit application
 ├── requirements.txt          # Python dependencies
-├── pytest.ini                # Pytest configuration
 └── README.md
 ```
 
@@ -190,8 +193,8 @@ logistics-ai-triage/
 
 ```bash
 # Clone the repository
-git clone https://github.com/<YOUR_USERNAME>/logistics-ai-triage.git
-cd logistics-ai-triage
+git clone https://github.com/mishankjain5/shipmate-ai.git
+cd shipmate-ai
 
 # Create and activate a virtual environment
 python -m venv venv
@@ -212,6 +215,8 @@ Create a `.env` file in the project root:
 
 ```dotenv
 GEMINI_API_KEY=your_gemini_api_key_here
+# Optional: post escalation alerts to Slack (otherwise they are printed to the console)
+SLACK_WEBHOOK_URL=
 ```
 
 ### 4. Run the Streamlit App (unified demo)
@@ -280,10 +285,10 @@ Where the LLM disagrees with the labels, it is on urgency by one level: it rates
 | Layer | Technologies |
 | :--- | :--- |
 | **Backend & API** | Python 3.11+, FastAPI, Uvicorn, Pydantic v2 |
-| **Machine Learning** | Scikit-Learn (`RandomForestClassifier`, `ColumnTransformer`), Pandas, NumPy, Joblib |
-| **NLP** | Google GenAI SDK, Gemini Flash |
+| **Machine Learning** | Scikit-Learn (`RandomForestClassifier`, `ColumnTransformer`), exact Shapley explanations, Pandas, NumPy, Joblib |
+| **LLM & Agents** | Google GenAI SDK, Gemini 3.5 Flash-Lite (structured output, function calling), custom agent loop with human-in-the-loop approvals |
 | **Frontend** | Streamlit, React 19, TypeScript, Vite, Tailwind CSS, Lucide Icons |
-| **Testing** | Pytest |
+| **Testing & Evaluation** | Pytest (fake-LLM agent tests), live LLM / agent / ML evaluation harness |
 
 ---
 
