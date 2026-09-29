@@ -51,6 +51,15 @@ def test_read_only_tool_runs_then_agent_answers():
     assert fn_response.name == "lookup_shipment"
 
 
+def test_lookup_always_includes_delay_risk_for_parcels_in_transit():
+    """Guaranteed in code: the agent can't miss a likely delay by skipping the risk tool."""
+    tools = {t.name: t for t in build_support_tools("x@y.z")}
+    in_transit = tools["lookup_shipment"].func(tracking_number="SHIP-1001")
+    assert in_transit["delay_risk"]["risk_tier"] == "CRITICAL_RISK"
+    delivered = tools["lookup_shipment"].func(tracking_number="SHIP-3003")
+    assert "delay_risk" not in delivered
+
+
 def test_side_effecting_tool_is_queued_not_executed():
     client = FakeClient([
         _response(calls=[_call("issue_voucher", amount_eur=80, reason="late parcel")]),

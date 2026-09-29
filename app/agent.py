@@ -182,6 +182,19 @@ def _assess_delay_risk_tool(tracking_number: str) -> dict:
     }
 
 
+def _lookup_with_delay_risk(tracking_number: str) -> dict:
+    """
+    Shipment lookup that always includes the ML delay risk for parcels still in transit.
+    Done in code rather than by prompt, so the agent can never report a normal ETA for a
+    stalled parcel just because it chose not to call the risk tool.
+    """
+    carrier_info = lookup_shipment(tracking_number)
+    prediction, _ = assess_delay_risk(carrier_info)
+    if prediction is None:
+        return carrier_info
+    return {**carrier_info, "delay_risk": prediction}
+
+
 def _voucher_validator(args: dict) -> Optional[str]:
     amount = float(args.get("amount_eur", 0))
     if amount <= 0:
@@ -196,9 +209,10 @@ def build_support_tools(customer_email: str, ticket_ref: str = "CHAT",
     tools = [
         Tool(
             name="lookup_shipment",
-            description="Get live carrier status for a tracking number: carrier, status, last hub, ETA, exceptions.",
+            description="Get live carrier status for a tracking number: carrier, status, last hub, ETA, exceptions, "
+                        "scan history, and (for parcels in transit) the ML delay risk.",
             parameters={"type": "object", "properties": {"tracking_number": {"type": "string"}}, "required": ["tracking_number"]},
-            func=lookup_shipment,
+            func=_lookup_with_delay_risk,
         ),
         Tool(
             name="assess_delay_risk",
@@ -377,6 +391,9 @@ Rules:
   (not the language suggested by their name or email).
 - Never invent shipment facts. Use lookup_shipment / assess_delay_risk to get them.
 - If you need a tracking number and don't have one, ask the customer for it.
+- If lookup_shipment returns a delay_risk with risk_tier MODERATE_RISK or CRITICAL_RISK, tell the
+  customer honestly that a delay is likely (mention how long since the last scan) instead of just
+  repeating the ETA. Use assess_delay_risk if they ask why.
 - Check check_policy before offering any compensation or making promises.
 - issue_voucher and request_customs_documents are queued for human approval: tell the customer
   it has been requested, never that it is done.
