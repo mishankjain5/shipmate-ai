@@ -166,6 +166,10 @@ logistics-ai-triage/
 │   ├── test_triage.py        # Carrier, ML and schema tests
 │   ├── test_explainability.py# Shapley, counterfactual, evidence and decision-trace tests
 │   └── test_agent.py         # Agent loop tests with a scripted fake LLM
+├── evals/
+│   ├── triage_cases.json     # 30 hand-labelled tickets
+│   ├── run_evals.py          # Triage, agent-behaviour and ML evaluation harness
+│   └── results/latest.md     # Latest evaluation report
 ├── streamlit_app.py          # Unified interactive Streamlit application
 ├── requirements.txt          # Python dependencies
 ├── pytest.ini                # Pytest configuration
@@ -243,6 +247,31 @@ python -m pytest
 ```
 
 The suite covers Pydantic schema integrity, the carrier simulator, ML inference and explanations, and the agent loop.
+
+---
+
+## 📏 Evaluation
+
+Unit tests check the code. The evaluation harness checks the **AI behaviour** against the live model:
+
+```bash
+python -m evals.run_evals            # all suites (~5 min on the free tier; throttled to 14 requests/min)
+python -m evals.run_evals --suite ml # ML only, no API calls
+```
+
+Latest run (`gemini-3.5-flash-lite`, full report in [evals/results/latest.md](evals/results/latest.md)):
+
+| Suite | What it measures | Result |
+| :--- | :--- | :--- |
+| **Triage extraction** (30 hand-labelled tickets in 5 languages, incl. sarcasm, missing tracking numbers and prompt injection) | Category accuracy | 100% |
+| | Urgency exact / within one level | 70% / 100% |
+| | Tracking-number exact match (incl. correctly returning none) | 100% |
+| | Language detection | 100% |
+| | Invented evidence quotes caught by the verbatim filter | 1 of 60 |
+| **Agent behaviour** (10 tool-use scenarios) | Right tools, actions queued not executed, guardrails, injection, data isolation, handoff | 10 / 10 |
+| **Delay model** (held-out 25%) | ROC-AUC / Brier score | 0.987 / 0.034 |
+
+Where the LLM disagrees with the labels, it is on urgency by one level: it rates damage claims harsher (critical instead of high) and delays or lost parcels softer. The datasets are small and self-labelled, and the ML labels are synthetic, so these numbers show the method and catch regressions. They are not production accuracy claims. Slack alerts are disabled during evaluation runs.
 
 ---
 
