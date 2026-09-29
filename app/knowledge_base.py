@@ -21,6 +21,13 @@ POLICIES: Dict[str, str] = {
         "Lost package: a parcel is declared lost after 10 business days without a scan. Open a carrier "
         "investigation first; refund or reship once the carrier confirms loss."
     ),
+    "not_received": (
+        "Delivered but not received: the carrier shows DELIVERED but the customer does not have the parcel. "
+        "1) Ask the customer to check with neighbours, safe places and their mailbox, and confirm the delivery "
+        "address. 2) Open a carrier investigation to obtain proof of delivery (signature, photo, GPS location). "
+        "3) If the carrier cannot prove delivery within 3 business days, reship or refund. Never tell the "
+        "customer the matter is closed just because the tracking says delivered."
+    ),
     "address_change": (
         "Address change: possible only while status is IN_TRANSIT and before the final-mile hub. "
         "Delivered or customs-held parcels cannot be rerouted."

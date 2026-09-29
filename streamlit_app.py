@@ -26,13 +26,11 @@ st.set_page_config(
 # Custom Styling
 st.markdown("""
 <style>
-    .main-header { font-size: 2.2rem; font-weight: 700; color: #1E293B; margin-bottom: 0.2rem; }
-    .sub-header { font-size: 1rem; color: #64748B; margin-bottom: 1.5rem; }
-    .badge-high { background-color: #FEE2E2; color: #991B1B; padding: 4px 8px; border-radius: 6px; font-weight: 600; font-size: 0.75rem; }
-    .badge-open { background-color: #FEF3C7; color: #92400E; padding: 4px 8px; border-radius: 6px; font-weight: 600; font-size: 0.75rem; }
-    .badge-resolved { background-color: #D1FAE5; color: #065F46; padding: 4px 8px; border-radius: 6px; font-weight: 600; font-size: 0.75rem; }
-    .customer-msg { background-color: #EFF6FF; color: #1E293B; padding: 12px 14px; border-radius: 8px; line-height: 1.5; }
-    .customer-msg mark { background-color: #FDE68A; padding: 0 2px; border-radius: 3px; }
+    /* Colours inherit from the active Streamlit theme so text stays readable in light and dark mode */
+    .main-header { font-size: 2.2rem; font-weight: 700; color: inherit; margin-bottom: 0.2rem; }
+    .sub-header { font-size: 1rem; color: inherit; opacity: 0.7; margin-bottom: 1.5rem; }
+    .customer-msg { background-color: rgba(59, 130, 246, 0.12); color: inherit; padding: 12px 14px; border-radius: 8px; line-height: 1.5; }
+    .customer-msg mark { background-color: #FDE68A; color: #1E293B; padding: 0 2px; border-radius: 3px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -172,11 +170,16 @@ def render_sidebar_metrics():
     with metrics_slot:
         st.divider()
         st.markdown("**System Metrics**")
-        st.metric("Total Tickets Processed", len(st.session_state.tickets))
-        open_tickets = len([t for t in st.session_state.tickets if t["status"] == "OPEN"])
-        st.metric("Pending Open Tickets", open_tickets)
-        pending = sum(a["status"] == "PENDING_APPROVAL" for t in st.session_state.tickets for a in t.get("pending_actions", []))
-        st.metric("Actions Awaiting Approval", pending)
+        tickets = st.session_state.tickets
+        st.metric("Tickets Received", len(tickets),
+                  help="All tickets in the system. Each one has already been triaged by the AI (classification, ML risk, draft reply).")
+        st.metric("Awaiting Human Review", sum(t["status"] == "OPEN" for t in tickets),
+                  help="AI-triaged tickets that no support agent has resolved or escalated yet.")
+        st.metric("Resolved", sum(t["status"] == "RESOLVED" for t in tickets),
+                  help="Tickets where a support agent approved and dispatched the reply.")
+        pending = sum(a["status"] == "PENDING_APPROVAL" for t in tickets for a in t.get("pending_actions", []))
+        st.metric("Actions Awaiting Approval", pending,
+                  help="Vouchers or document requests the AI agent has asked for, waiting for a human to approve.")
 
         st.divider()
         st.caption("Built with Gemini (tool calling) + Scikit-Learn Random Forest + exact Shapley explanations + Streamlit.")

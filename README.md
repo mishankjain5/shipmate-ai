@@ -125,7 +125,7 @@ The LLM decides which tools to call through a Gemini function-calling loop (`app
 | Tool | Effect |
 | :--- | :--- |
 | `lookup_shipment`, `assess_delay_risk`, `check_policy`, `get_customer_history` | Read-only: run automatically |
-| `escalate_to_operations`, `handoff_to_human` | Internal: run automatically |
+| `escalate_to_operations`, `open_carrier_investigation`, `handoff_to_human` | Internal: run automatically |
 | `issue_voucher`, `request_customs_documents` | **Queued for human approval** |
 
 Guardrails: a step limit, business-rule validators (voucher cap of EUR 200, manager approval above EUR 50), customer data bound server-side (the model cannot look up another customer), prompt-injection instructions, retry with backoff on rate limits, and a full reasoning trace for every step.

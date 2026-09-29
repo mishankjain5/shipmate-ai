@@ -14,6 +14,14 @@ def issue_voucher(customer_email: str, amount_eur: float, reason: str) -> dict:
     return {"voucher_code": code, "amount_eur": amount_eur, "sent_to": customer_email}
 
 
+def open_carrier_investigation(tracking_number: str, reason: str) -> dict:
+    """Internal case with the carrier (proof of delivery, lost parcel). No customer-facing effect."""
+    case_id = f"INV-{uuid.uuid4().hex[:6].upper()}"
+    print(f"\n🔎 [CARRIER INVESTIGATION] {case_id} for {tracking_number}: {reason}\n")
+    return {"investigation_id": case_id, "tracking_number": tracking_number,
+            "expected_carrier_response": "within 3 business days"}
+
+
 def request_customs_documents(customer_email: str, tracking_number: str, documents: list) -> dict:
     request_id = f"DOC-{uuid.uuid4().hex[:6].upper()}"
     print(f"\n📄 [CUSTOMS DOC REQUEST] {request_id} for {tracking_number} -> {customer_email}: {documents}\n")

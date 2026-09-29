@@ -222,7 +222,8 @@ def build_support_tools(customer_email: str, ticket_ref: str = "CHAT",
         ),
         Tool(
             name="check_policy",
-            description="Look up company support policy. Topics: damaged_goods, delayed_delivery, customs, lost_package, address_change, vouchers.",
+            description="Look up company support policy. Topics: damaged_goods, delayed_delivery, customs, lost_package, "
+                        "not_received (delivered but not received), address_change, vouchers.",
             parameters={"type": "object", "properties": {"topic": {"type": "string"}}, "required": ["topic"]},
             func=knowledge_base.check_policy,
         ),
@@ -245,6 +246,17 @@ def build_support_tools(customer_email: str, ticket_ref: str = "CHAT",
                 "required": ["summary", "urgency"],
             },
             func=lambda summary, urgency: {"alert_sent": send_slack_alert(ticket_ref, summary, urgency, {})},
+        ),
+        Tool(
+            name="open_carrier_investigation",
+            description="Open an internal case with the carrier to obtain proof of delivery or trace a lost parcel. "
+                        "Use when tracking says DELIVERED but the customer has not received it.",
+            parameters={
+                "type": "object",
+                "properties": {"tracking_number": {"type": "string"}, "reason": {"type": "string"}},
+                "required": ["tracking_number", "reason"],
+            },
+            func=actions.open_carrier_investigation,
         ),
         Tool(
             name="issue_voucher",
@@ -394,6 +406,9 @@ Rules:
 - If lookup_shipment returns a delay_risk with risk_tier MODERATE_RISK or CRITICAL_RISK, tell the
   customer honestly that a delay is likely (mention how long since the last scan) instead of just
   repeating the ETA. Use assess_delay_risk if they ask why.
+- If tracking says DELIVERED but the customer says they haven't received it, never treat the case
+  as closed: check_policy("not_received"), ask them to check neighbours/safe places and confirm the
+  address, and use open_carrier_investigation. Explain the next steps and the timeline.
 - Check check_policy before offering any compensation or making promises.
 - issue_voucher and request_customs_documents are queued for human approval: tell the customer
   it has been requested, never that it is done.
@@ -409,6 +424,8 @@ Investigate using your tools: verify the shipment, assess delay risk, check the 
 history and the relevant policy. If an action is clearly justified by policy, request it
 (it will be queued for human approval). Escalate to operations only if urgent and not already escalated
 (already escalated: {already_escalated}).
+If tracking says DELIVERED but the customer reports not receiving it, follow the not_received policy
+and open a carrier investigation.
 
 Finish with a short answer in exactly this format:
 **Findings:** 2-3 bullet points
