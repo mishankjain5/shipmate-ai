@@ -59,7 +59,7 @@ It pairs **Gemini Flash structured NLP** (which reads what the customer actually
              ┌───────────────┘             │             └───────────────┐
              ▼                             ▼                             ▼
 ┌─────────────────────────┐   ┌─────────────────────────┐   ┌─────────────────────────┐
-│      Gemini Flash       │   │  Scikit-Learn Pipeline  │   │ Mock Carrier Telemetry  │
+│      Gemini Flash       │   │  Scikit-Learn Pipeline  │   │ Carrier Simulator (API) │
 │     Structured NLP      │   │      RandomForest       │   │     DHL · DPD · GLS     │
 │    Entity Extraction    │   │ SLA Breach Probability  │   │   PostNL · Colissimo    │
 └─────────────────────────┘   └─────────────────────────┘   └─────────────────────────┘
@@ -75,8 +75,8 @@ ShipMate AI scores both axes independently and routes on the combination.
 
 | Operational Scenario | LLM Urgency (Gemini) | ML SLA Breach Risk (Random Forest) | Operational Result |
 | :--- | :--- | :--- | :--- |
-| **Damaged cargo on arrival** | `CRITICAL` — refund / claim needed | **3.7%** `LOW` — parcel already delivered | Flags immediate claim action without raising a false delay alert |
-| **Customs invoice discrepancy** | `HIGH` — customer inquiry | **82.4%** `CRITICAL` — dwell time > 36h | Auto-escalates the ticket to the logistics lead via webhook alert |
+| **Damaged cargo on arrival** | `CRITICAL` — refund / claim needed | **N/A** — parcel already delivered, so the model is not run | Flags immediate claim action without raising a false delay alert |
+| **Customs invoice discrepancy** | `HIGH` — customer inquiry | **98.2%** `CRITICAL` — held 44h at Roissy customs | Auto-escalates the ticket to the logistics lead via webhook alert |
 | **Routine status check** | `LOW` — polite check-in | **12.0%** `LOW` — normal hub throughput | AI-generated draft reply ready for one-click dispatch |
 
 > Figures above are illustrative walkthroughs of the demo scenarios shipped with the app.
@@ -96,12 +96,19 @@ ShipMate AI scores both axes independently and routes on the combination.
 **Predictive ML delay model**
 - Trained on simulated cross-border transit data across European hubs: Potsdam, Leipzig, Frankfurt, Roissy CDG Customs, and Amsterdam.
 - Features: `carrier`, `last_hub`, `dwell_time_hours`, `is_cross_border`.
+- Only scores shipments that are actually in transit. Missing, unknown or already-delivered parcels are shown as "not applicable" instead of getting a made-up risk.
+
+**Carrier integration layer**
+- The app depends on a `CarrierClient` interface. The demo uses a **deterministic shipment simulator**: any tracking number maps (by hash) to one consistent shipment across 5 European lanes, with a realistic scan-event history.
+- Dwell time is computed from the last carrier scan, not hard-coded, so the ML inputs vary per shipment.
+- Malformed or unregistered tracking numbers return `NOT_FOUND`, so typos are caught.
+- Demo presets: `SHIP-1001` (stalled at Potsdam), `SHIP-2002` (customs hold at Roissy CDG), `SHIP-3003` (delivered to Amsterdam). A real carrier or tracking-aggregator API can replace the simulator without changing the AI layer.
 
 **Automated escalation router**
 - Webhook alert dispatcher for high-risk customs exceptions and critical delays.
 
 **Full automated test suite**
-- `pytest` coverage across schema integrity, carrier fallback logic, ML pipeline inference, Shapley explanations, and the agent loop (with a scripted fake LLM, so no API key is needed).
+- `pytest` coverage across schema integrity, the carrier simulator, ML pipeline inference, Shapley explanations, and the agent loop (with a scripted fake LLM, so no API key is needed).
 
 ---
 
@@ -141,7 +148,7 @@ logistics-ai-triage/
 │   ├── __init__.py
 │   ├── schemas.py            # Pydantic schemas & response contracts
 │   ├── llm_agent.py          # Gemini Flash structured extraction & drafting
-│   ├── mock_carrier_api.py   # European parcel routing & scan telemetry
+│   ├── mock_carrier_api.py   # CarrierClient interface + deterministic shipment simulator
 │   ├── ml_delay_model.py     # Scikit-learn Random Forest delay classifier
 │   ├── notifier.py           # Escalation alert webhook dispatcher
 │   ├── triage.py             # Shared triage pipeline + escalation decision trace
@@ -235,7 +242,7 @@ npm run dev
 python -m pytest
 ```
 
-The suite covers Pydantic schema integrity, carrier fallback behaviour, and end-to-end ML pipeline inference.
+The suite covers Pydantic schema integrity, the carrier simulator, ML inference and explanations, and the agent loop.
 
 ---
 

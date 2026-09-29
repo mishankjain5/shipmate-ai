@@ -88,12 +88,13 @@ def update_ticket_status(payload: TicketActionPayload):
 @app.get("/api/agent/tickets/{ticket_id}/explanation")
 def get_explanation(ticket_id: str, narrate: bool = False):
     ticket = _find_ticket(ticket_id)
-    if narrate and "ml_narrative" not in ticket:
+    if narrate and ticket["ml_explanation"] and "ml_narrative" not in ticket:
         ticket["ml_narrative"] = narrate_risk_explanation(ticket["ml_prediction"], ticket["ml_explanation"])
     return {
         "ml_prediction": ticket["ml_prediction"],
         "ml_explanation": ticket["ml_explanation"],
         "ml_narrative": ticket.get("ml_narrative"),
+        "ml_not_applicable": ticket.get("ml_not_applicable"),
         "llm_reasoning": ticket["analysis"].get("urgency_reasoning"),
         "llm_evidence": ticket["analysis"].get("evidence", []),
         "escalation_reasons": ticket.get("escalation_reasons", []),

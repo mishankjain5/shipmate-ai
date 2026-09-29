@@ -309,6 +309,8 @@ with tab_agent:
                     waiting = sum(a["status"] == "PENDING_APPROVAL" for a in t.get("pending_actions", []))
                     if waiting:
                         st.caption(f"⏸️ {waiting} action(s) awaiting approval")
+                    if (t.get("carrier_status") or {}).get("status") in ("NOT_FOUND", "NO_TRACKING_PROVIDED"):
+                        st.caption("⚠️ No shipment found - ask the customer for a valid tracking number")
 
                     if st.button("Inspect Dossier & Draft", key=f"btn_{t['ticket_id']}", use_container_width=True):
                         st.session_state.selected_ticket_id = t["ticket_id"]
@@ -341,26 +343,40 @@ with tab_agent:
             with m1:
                 with st.container(border=True):
                     st.markdown("🚚 **Carrier Telemetry**")
-                    if selected_ticket["carrier_status"]:
-                        st.caption(f"**Status:** `{selected_ticket['carrier_status'].get('status')}`")
-                        st.caption(f"**Carrier:** {selected_ticket['carrier_status'].get('carrier')}")
-                        st.caption(f"**Hub:** {selected_ticket['carrier_status'].get('last_hub')}")
+                    cs = selected_ticket["carrier_status"] or {}
+                    st.caption(f"**Status:** `{cs.get('status')}`")
+                    if cs.get("status") in ("NOT_FOUND", "NO_TRACKING_PROVIDED"):
+                        st.caption(cs.get("notes", "No carrier record found."))
                     else:
-                        st.caption("No carrier record found.")
+                        st.caption(f"**Carrier:** {cs.get('carrier')}")
+                        st.caption(f"**Route:** {cs.get('origin')} → {cs.get('destination')}")
+                        st.caption(f"**Last hub:** {cs.get('last_hub')}")
+                        if cs.get("dwell_time_hours") is not None:
+                            st.caption(f"**Last scan:** {cs['dwell_time_hours']}h ago")
+                        if cs.get("delivered_at"):
+                            st.caption(f"**Delivered:** {cs['delivered_at']} ({cs.get('signed_by')})")
 
             with m2:
                 with st.container(border=True):
                     st.markdown("📊 **ML Delay Probability**")
                     ml = selected_ticket["ml_prediction"]
-                    prob = ml["delay_probability"]
-                    st.metric("SLA Breach Risk", f"{prob}%")
-                    st.progress(prob / 100.0)
-                    st.caption(f"Model: {ml['model_used']}")
+                    if ml:
+                        prob = ml["delay_probability"]
+                        st.metric("SLA Breach Risk", f"{prob}%")
+                        st.progress(prob / 100.0)
+                        st.caption(f"Model: {ml['model_used']}")
+                    else:
+                        st.metric("SLA Breach Risk", "N/A")
+                        st.caption(selected_ticket.get("ml_not_applicable") or "Not applicable.")
 
             with m3:
                 with st.container(border=True):
                     st.markdown("🤖 **AI Directive**")
                     st.warning(analysis["action_required"])
+
+            if cs.get("scan_events"):
+                with st.expander(f"📍 Carrier scan history ({len(cs['scan_events'])} events)"):
+                    st.dataframe(pd.DataFrame(cs["scan_events"]), hide_index=True, use_container_width=True)
 
             # --- Explainable AI ---
             with st.container(border=True):
@@ -383,11 +399,15 @@ with tab_agent:
                             with st.spinner("Translating the model's reasoning..."), llm_errors():
                                 selected_ticket["ml_narrative"] = narrate_risk_explanation(ml, explanation)
                             st.rerun()
+                    else:
+                        st.info(f"The delay model was not run: {selected_ticket.get('ml_not_applicable')}")
 
                 with x_cf:
                     if explanation:
                         for cf in explanation["counterfactuals"]:
                             st.markdown(f"- {cf}")
+                    else:
+                        st.caption("No what-if analysis: the delay model was not run for this ticket.")
 
                 with x_llm:
                     st.markdown(f"**Urgency:** `{analysis['urgency'].upper()}`")
@@ -405,7 +425,7 @@ with tab_agent:
                             st.markdown(f"- ✅ {r}")
                     else:
                         st.markdown("**Decision:** `AUTO_DRAFT_CREATED` - no escalation rule fired "
-                                    "(ML risk < 70%, no customs hold, urgency below HIGH).")
+                                    "(ML risk below 70% or not applicable, no customs hold, urgency below HIGH).")
 
             # --- Agentic AI ---
             with st.container(border=True):

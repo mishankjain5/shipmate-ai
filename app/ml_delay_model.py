@@ -9,6 +9,18 @@ import os
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "delay_model.joblib")
 
+# Shared vocabulary: the carrier simulator uses the same names, so every shipment
+# it produces is inside the model's training distribution.
+CARRIERS = ["DHL Express", "DPD Europe", "Hermes Germany", "GLS Logistics", "PostNL", "Colissimo"]
+HUBS = [
+    "Potsdam Sorting Facility",
+    "Leipzig Hub",
+    "Frankfurt Gateway",
+    "Roissy CDG Airport Customs",
+    "Berlin South Center",
+    "Amsterdam Parcel Center"
+]
+
 def generate_synthetic_training_data(n_samples: int = 2500) -> pd.DataFrame:
     """
     Generates domain-realistic European cross-border parcel telemetry.
@@ -22,18 +34,8 @@ def generate_synthetic_training_data(n_samples: int = 2500) -> pd.DataFrame:
     """
     np.random.seed(42)
 
-    carriers = ["DHL Express", "DPD Europe", "Hermes Germany", "GLS Logistics", "PostNL", "Colissimo"]
-    hubs = [
-        "Potsdam Sorting Facility", 
-        "Leipzig Hub", 
-        "Frankfurt Gateway", 
-        "Roissy CDG Airport Customs", 
-        "Berlin South Center",
-        "Amsterdam Parcel Center"
-    ]
-
-    carrier_col = np.random.choice(carriers, n_samples)
-    hub_col = np.random.choice(hubs, n_samples)
+    carrier_col = np.random.choice(CARRIERS, n_samples)
+    hub_col = np.random.choice(HUBS, n_samples)
     dwell_time = np.random.exponential(scale=26.0, size=n_samples)  # Right-skewed realistic wait times
     cross_border = np.random.choice([0, 1], p=[0.35, 0.65], size=n_samples)
 

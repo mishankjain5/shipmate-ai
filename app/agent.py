@@ -20,7 +20,7 @@ from app import actions, knowledge_base
 from app.llm_agent import MODEL_ID, generate_content
 from app.mock_carrier_api import lookup_shipment
 from app.notifier import send_slack_alert
-from app.triage import assess_delay_risk
+from app.triage import assess_delay_risk, ml_not_applicable_reason
 
 MAX_STEPS = 6
 
@@ -172,6 +172,8 @@ class Agent:
 def _assess_delay_risk_tool(tracking_number: str) -> dict:
     carrier_info = lookup_shipment(tracking_number)
     prediction, explanation = assess_delay_risk(carrier_info)
+    if prediction is None:
+        return {"prediction": None, "not_applicable": ml_not_applicable_reason(carrier_info)}
     return {
         "prediction": prediction,
         "top_factors": explanation["contributions"][:3],
@@ -282,7 +284,7 @@ def _compact(ticket: dict) -> dict:
         "summary": ticket["analysis"]["summary"],
         "carrier_status": (ticket.get("carrier_status") or {}).get("status"),
         "last_hub": (ticket.get("carrier_status") or {}).get("last_hub"),
-        "delay_risk_pct": ticket["ml_prediction"]["delay_probability"],
+        "delay_risk_pct": (ticket.get("ml_prediction") or {}).get("delay_probability"),  # None = not scorable
         "escalated": bool(ticket.get("escalation_reasons")),
         "pending_approvals": sum(a["status"] == "PENDING_APPROVAL" for a in ticket.get("pending_actions", [])),
     }
@@ -299,7 +301,7 @@ def build_copilot_tools(get_tickets: Callable[[], list]) -> list[Tool]:
         if category:
             rows = [r for r in rows if r["category"] == category.lower()]
         if min_delay_risk is not None:
-            rows = [r for r in rows if r["delay_risk_pct"] >= float(min_delay_risk)]
+            rows = [r for r in rows if r["delay_risk_pct"] is not None and r["delay_risk_pct"] >= float(min_delay_risk)]
         if escalated_only:
             rows = [r for r in rows if r["escalated"]]
         return {"count": len(rows), "tickets": rows}
@@ -313,6 +315,7 @@ def build_copilot_tools(get_tickets: Callable[[], list]) -> list[Tool]:
 
     def queue_statistics() -> dict:
         rows = [_compact(t) for t in get_tickets()]
+        scored = [r["delay_risk_pct"] for r in rows if r["delay_risk_pct"] is not None]
         def count_by(key):
             out = {}
             for r in rows:
@@ -324,7 +327,8 @@ def build_copilot_tools(get_tickets: Callable[[], list]) -> list[Tool]:
             "by_urgency": count_by("urgency"),
             "by_category": count_by("category"),
             "escalated": sum(r["escalated"] for r in rows),
-            "avg_delay_risk_pct": round(sum(r["delay_risk_pct"] for r in rows) / len(rows), 1) if rows else None,
+            "avg_delay_risk_pct": round(sum(scored) / len(scored), 1) if scored else None,
+            "not_scorable": len(rows) - len(scored),
             "pending_approvals": sum(r["pending_approvals"] for r in rows),
         }
 

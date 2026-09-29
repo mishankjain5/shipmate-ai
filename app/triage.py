@@ -15,33 +15,46 @@ def new_ticket_id() -> str:
     return f"TICK-{uuid.uuid4().hex[:6].upper()}"
 
 
-def ml_inputs_from_carrier(carrier_info: Optional[dict]) -> dict:
-    """Derives delay-model features from a carrier record."""
-    carrier_name = carrier_info.get("carrier", "DHL Express") if carrier_info else "DHL Express"
-    hub_name = carrier_info.get("last_hub", "Potsdam Sorting Facility") if carrier_info else "Potsdam Sorting Facility"
-    # Simulate realistic dwell time based on whether tracking is stalled
-    simulated_dwell_time = 44.0 if (carrier_info and carrier_info.get("status") in ["IN_TRANSIT", "CUSTOMS_HOLD"]) else 12.0
+SCORABLE_STATUSES = {"IN_TRANSIT", "CUSTOMS_HOLD"}
+
+
+def ml_not_applicable_reason(carrier_info: Optional[dict]) -> Optional[str]:
+    """Why the delay model should NOT score this shipment (None = it should)."""
+    status = (carrier_info or {}).get("status")
+    if status in SCORABLE_STATUSES:
+        return None
     return {
-        "carrier": carrier_name,
-        "last_hub": hub_name,
-        "dwell_time_hours": simulated_dwell_time,
-        "is_cross_border": 1,
+        "NO_TRACKING_PROVIDED": "No tracking number was provided, so there is no shipment to score.",
+        "NOT_FOUND": "The carrier has no record of this tracking number.",
+        "DELIVERED": "The parcel has already been delivered, so there is no delay left to predict.",
+    }.get(status, f"Shipment status '{status}' cannot be scored.")
+
+
+def ml_inputs_from_carrier(carrier_info: dict) -> dict:
+    """Derives delay-model features from a live carrier record."""
+    return {
+        "carrier": carrier_info["carrier"],
+        "last_hub": carrier_info["last_hub"],
+        "dwell_time_hours": carrier_info["dwell_time_hours"],   # hours since the last carrier scan
+        "is_cross_border": carrier_info["is_cross_border"],
     }
 
 
-def assess_delay_risk(carrier_info: Optional[dict]) -> tuple[dict, dict]:
-    """Returns (ml_prediction, ml_explanation) for a carrier record."""
+def assess_delay_risk(carrier_info: Optional[dict]) -> tuple[Optional[dict], Optional[dict]]:
+    """Returns (ml_prediction, ml_explanation), or (None, None) if there is no shipment in transit to score."""
+    if ml_not_applicable_reason(carrier_info):
+        return None, None
     features = ml_inputs_from_carrier(carrier_info)
     prediction = predict_delay_risk(**features)
     explanation = explain_prediction(**features)
-    explanation["notes"] = ["dwell_time_hours is simulated from carrier status (44h if stalled, else 12h) in this demo."]
+    explanation["notes"] = [f"Dwell time is computed from the last carrier scan ({features['dwell_time_hours']}h ago)."]
     return prediction, explanation
 
 
-def decide_escalation(analysis: ExtractedTicketData, ml_prediction: dict, carrier_info: Optional[dict]) -> list[str]:
+def decide_escalation(analysis: ExtractedTicketData, ml_prediction: Optional[dict], carrier_info: Optional[dict]) -> list[str]:
     """Decision engine combining LLM + ML + carrier exception. Returns the reasons that fired (empty = no escalation)."""
     reasons = []
-    if ml_prediction["risk_tier"] == "CRITICAL_RISK":
+    if ml_prediction and ml_prediction["risk_tier"] == "CRITICAL_RISK":
         reasons.append(f"ML delay risk is CRITICAL ({ml_prediction['delay_probability']}% >= 70%)")
     if carrier_info and carrier_info.get("status") == "CUSTOMS_HOLD":
         detail = carrier_info.get("exception_reason", "no reason given")
@@ -71,11 +84,12 @@ def run_triage(sender_name: str, sender_email: str, subject: str, body: str,
     # 4. Decision Engine with an explicit decision trace
     escalation_reasons = decide_escalation(analysis, ml_prediction, carrier_info)
     if escalation_reasons:
+        risk_label = f"{ml_prediction['delay_probability']}%" if ml_prediction else "n/a"
         send_slack_alert(
             ticket_id=ticket_id,
-            summary=f"[ML Risk: {ml_prediction['delay_probability']}%] {analysis.summary}",
+            summary=f"[ML Risk: {risk_label}] {analysis.summary}",
             urgency=analysis.urgency.value,
-            carrier_status=carrier_info
+            carrier_status={k: v for k, v in carrier_info.items() if k != "scan_events"}
         )
         action_taken = "ESCALATED_TO_SLACK"
     else:
@@ -95,6 +109,7 @@ def run_triage(sender_name: str, sender_email: str, subject: str, body: str,
         "carrier_status": carrier_info,
         "ml_prediction": ml_prediction,
         "ml_explanation": ml_explanation,
+        "ml_not_applicable": ml_not_applicable_reason(carrier_info),
         "action_taken": action_taken,
         "escalation_reasons": escalation_reasons,
         "draft_reply": draft,

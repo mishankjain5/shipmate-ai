@@ -8,8 +8,9 @@ def test_valid_preset_carrier_lookup():
     result = lookup_shipment("SHIP-1001")
     assert result is not None
     assert result["status"] == "IN_TRANSIT"
-    assert result["carrier"] == "DHL Germany"
-    assert result["last_hub"] == "Potsdam Sorting Center"
+    assert result["carrier"] == "DHL Express"
+    assert result["last_hub"] == "Potsdam Sorting Facility"
+    assert result["dwell_time_hours"] == 70.0
 
 def test_dynamic_fallback_carrier_lookup():
     """Verify that unlisted tracking codes generate a valid synthetic record."""
