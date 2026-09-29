@@ -2,6 +2,7 @@ import html
 import json
 import re
 from contextlib import contextmanager
+from typing import Optional
 
 import altair as alt
 import pandas as pd
@@ -73,6 +74,9 @@ CHAT_STARTERS = [
     "Mon colis SHIP-2002 est bloqué à la douane. Quels documents faut-il envoyer ?",
     "SHIP-3003 arrived crushed. I want a refund or I'm calling my lawyer.",
 ]
+
+NEW_CUSTOMER = "➕ New customer…"
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[a-z]{2,}$")
 
 COPILOT_STARTERS = [
     "Give me an overview of the queue.",
@@ -244,17 +248,29 @@ with tab_chat:
 
     persona_names = {s["name"]: s["email"] for s in DEMO_SCENARIOS.values()}
     pc1, pc2 = st.columns([3, 1])
-    persona = pc1.selectbox("Chatting as customer", list(persona_names), key="chat_persona")
-    if pc2.button("🔄 New conversation", use_container_width=True) or st.session_state.chat_session is None \
-            or st.session_state.chat_session.customer_name != persona:
+    persona = pc1.selectbox("Chatting as customer", list(persona_names) + [NEW_CUSTOMER], key="chat_persona")
+    if persona == NEW_CUSTOMER:
+        nc1, nc2 = st.columns(2)
+        chat_name = nc1.text_input("Customer name", key="chat_custom_name", placeholder="e.g. Sofia Rossi").strip()
+        chat_email = nc2.text_input("Customer email", key="chat_custom_email", placeholder="e.g. sofia@example.it").strip().lower()
+    else:
+        chat_name, chat_email = persona, persona_names[persona]
+
+    identity_ok = bool(chat_name) and bool(EMAIL_PATTERN.match(chat_email))
+    current = st.session_state.chat_session
+    if identity_ok and (pc2.button("🔄 New conversation", use_container_width=True) or current is None
+                        or (current.customer_name, current.customer_email) != (chat_name, chat_email)):
+        # A different customer always gets a fresh conversation (memory and CRM access are per customer)
         st.session_state.chat_session = ChatSession(
-            persona, persona_names[persona],
+            chat_name, chat_email,
             on_ticket_created=lambda t: st.session_state.tickets.insert(0, t),
         )
 
-    session: ChatSession = st.session_state.chat_session
+    session: Optional[ChatSession] = st.session_state.chat_session if identity_ok else None
+    if session is None:
+        st.info("Enter the customer's name and a valid email address to start chatting.")
 
-    if not session.transcript:
+    if session and not session.transcript:
         st.caption("Try a starter message:")
         starter_cols = st.columns(len(CHAT_STARTERS))
         for i, starter in enumerate(CHAT_STARTERS):
@@ -262,20 +278,22 @@ with tab_chat:
                 st.session_state.pending_chat = starter
                 st.rerun()
 
-    for msg in session.transcript:
+    for msg in session.transcript if session else []:
         with st.chat_message("user" if msg["role"] == "customer" else "assistant"):
             st.markdown(msg["text"])
             if msg["role"] == "assistant":
                 render_trace(msg.get("trace", []))
 
-    if session.handoff_summary:
+    if session and session.handoff_summary:
         st.warning(f"🙋 Handed off to a human agent. Summary: {session.handoff_summary}")
-    if session.ticket:
+    if session and session.ticket:
         st.info(f"📨 Conversation converted into ticket **{session.ticket['ticket_id']}**. See the Agent Workspace.")
-    render_pending_actions(session.pending_actions, key_prefix="chat")
+    if session:
+        render_pending_actions(session.pending_actions, key_prefix="chat")
 
-    user_text = st.chat_input("Type your message...", key="chat_input") or st.session_state.pop("pending_chat", None)
-    if user_text:
+    user_text = st.chat_input("Type your message...", key="chat_input", disabled=session is None) \
+        or st.session_state.pop("pending_chat", None)
+    if user_text and session:
         with st.spinner("🤖 Thinking and calling tools..."), llm_errors():
             session.send(user_text)
         st.rerun()
