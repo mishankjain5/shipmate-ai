@@ -12,7 +12,6 @@
 [![Gemini Flash](https://img.shields.io/badge/Gemini_Flash-Google_GenAI-8E75B2.svg)](https://ai.google.dev/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-App-FF4B4B.svg)](https://streamlit.io/)
 [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](#-license)
 
 **[🚀 Try the Live Demo](https://shipmate-ai.streamlit.app)**
 
@@ -32,7 +31,6 @@
 - [Running Tests](#-running-tests)
 - [Evaluation](#-evaluation)
 - [Tech Stack](#-tech-stack)
-- [License](#-license)
 
 ---
 
@@ -289,12 +287,6 @@ Where the LLM disagrees with the labels, it is on urgency by one level: it rates
 | **LLM & Agents** | Google GenAI SDK, Gemini 3.5 Flash-Lite (structured output, function calling), custom agent loop with human-in-the-loop approvals |
 | **Frontend** | Streamlit, React 19, TypeScript, Vite, Tailwind CSS, Lucide Icons |
 | **Testing & Evaluation** | Pytest (fake-LLM agent tests), live LLM / agent / ML evaluation harness |
-
----
-
-## 📄 License
-
-Released under the [MIT License](LICENSE).
 
 ---
 
