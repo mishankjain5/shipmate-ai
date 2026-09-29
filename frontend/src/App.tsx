@@ -24,22 +24,22 @@ const DEMO_SCENARIOS = {
     name: "Max Mustermann",
     email: "max.mustermann@post.de",
     subject: "Where is my package? Delivery delayed!",
-    tracking: "SEVEN-1001",
-    body: "Hi, I have been tracking order SEVEN-1001 for 3 days and the status has not moved from Potsdam. I need this urgently for a birthday party tomorrow or I will cancel the order."
+    tracking: "SHIP-1001",
+    body: "Hi, I have been tracking order SHIP-1001 for 3 days and the status has not moved from Potsdam. I need this urgently for a birthday party tomorrow or I will cancel the order."
   },
   customs: {
     name: "Claire Dupont",
     email: "c.dupont@paris-store.fr",
     subject: "Colis bloque a la douane / Package stuck in customs",
-    tracking: "SEVEN-2002",
-    body: "Hello, my shipment SEVEN-2002 to Paris is marked with a customs hold exception at CDG airport. Can you check what documents are missing to clear this?"
+    tracking: "SHIP-2002",
+    body: "Hello, my shipment SHIP-2002 to Paris is marked with a customs hold exception at CDG airport. Can you check what documents are missing to clear this?"
   },
   damaged: {
     name: "Jan de Vries",
     email: "jan.vries@enterprise.nl",
     subject: "DAMAGED GOODS ON ARRIVAL - REFUND NEEDED",
-    tracking: "SEVEN-3003",
-    body: "Our package SEVEN-3003 arrived completely crushed, torn open, and unusable. Please process an immediate replacement or full refund right away."
+    tracking: "SHIP-3003",
+    body: "Our package SHIP-3003 arrived completely crushed, torn open, and unusable. Please process an immediate replacement or full refund right away."
   }
 };
 
@@ -202,21 +202,21 @@ export default function App() {
                   onClick={() => fillScenario('delayed')}
                   className="px-3 py-1.5 bg-white hover:bg-indigo-50 hover:text-indigo-600 text-xs font-medium rounded-lg border border-slate-200 transition shadow-2xs"
                 >
-                  📦 Delayed Order (SEVEN-1001)
+                  📦 Delayed Order (SHIP-1001)
                 </button>
                 <button
                   type="button"
                   onClick={() => fillScenario('customs')}
                   className="px-3 py-1.5 bg-white hover:bg-amber-50 hover:text-amber-600 text-xs font-medium rounded-lg border border-slate-200 transition shadow-2xs"
                 >
-                  🛃 Customs Issue (SEVEN-2002)
+                  🛃 Customs Issue (SHIP-2002)
                 </button>
                 <button
                   type="button"
                   onClick={() => fillScenario('damaged')}
                   className="px-3 py-1.5 bg-white hover:bg-rose-50 hover:text-rose-600 text-xs font-medium rounded-lg border border-slate-200 transition shadow-2xs"
                 >
-                  💥 Damaged Goods (SEVEN-3003)
+                  💥 Damaged Goods (SHIP-3003)
                 </button>
               </div>
             </div>

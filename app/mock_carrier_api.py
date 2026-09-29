@@ -3,8 +3,8 @@ import random
 
 # Core Known Scenarios
 KNOWN_SHIPMENTS: Dict[str, Dict] = {
-    "SEVEN-1001": {
-        "tracking_number": "SEVEN-1001",
+    "SHIP-1001": {
+        "tracking_number": "SHIP-1001",
         "carrier": "DHL Germany",
         "service": "Standard Parcel",
         "status": "IN_TRANSIT",
@@ -14,8 +14,8 @@ KNOWN_SHIPMENTS: Dict[str, Dict] = {
         "last_hub": "Potsdam Sorting Center",
         "exception_flag": False
     },
-    "SEVEN-2002": {
-        "tracking_number": "SEVEN-2002",
+    "SHIP-2002": {
+        "tracking_number": "SHIP-2002",
         "carrier": "Colissimo",
         "service": "Cross-Border Express",
         "status": "CUSTOMS_HOLD",
@@ -26,8 +26,8 @@ KNOWN_SHIPMENTS: Dict[str, Dict] = {
         "exception_flag": True,
         "exception_reason": "Missing Commercial Invoice"
     },
-    "SEVEN-3003": {
-        "tracking_number": "SEVEN-3003",
+    "SHIP-3003": {
+        "tracking_number": "SHIP-3003",
         "carrier": "PostNL",
         "service": "Standard Direct",
         "status": "DELIVERED",

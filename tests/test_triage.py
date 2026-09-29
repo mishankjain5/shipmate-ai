@@ -5,7 +5,7 @@ from app.schemas import TicketPayload, UrgencyLevel
 
 def test_valid_preset_carrier_lookup():
     """Verify that preset tracking IDs return deterministic telemetry."""
-    result = lookup_shipment("SEVEN-1001")
+    result = lookup_shipment("SHIP-1001")
     assert result is not None
     assert result["status"] == "IN_TRANSIT"
     assert result["carrier"] == "DHL Germany"
@@ -43,9 +43,9 @@ def test_ticket_payload_schema():
     """Verify Pydantic input schema initialization."""
     payload = TicketPayload(
         ticket_id="TICK-TEST01",
-        sender_email="test@seven.de",
+        sender_email="test@shipmate.de",
         subject="Test delay subject",
-        body="Where is my package SEVEN-1001?"
+        body="Where is my package SHIP-1001?"
     )
     assert payload.ticket_id == "TICK-TEST01"
-    assert payload.sender_email == "test@seven.de"
+    assert payload.sender_email == "test@shipmate.de"

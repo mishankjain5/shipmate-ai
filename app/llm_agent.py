@@ -46,7 +46,7 @@ extract critical shipping identifiers (Tracking numbers, Customer IDs), and asse
 
 Rules:
 1. If the user mentions damage or threats of legal/dispute actions, mark urgency as CRITICAL or HIGH.
-2. Tracking numbers usually follow patterns like 'SEVEN-XXXX' or standard alphanumeric strings (8-16 chars).
+2. Tracking numbers usually follow patterns like 'SHIP-XXXX' or standard alphanumeric strings (8-16 chars).
 3. If no tracking number is found, return null/None.
 4. Explain your urgency decision in urgency_reasoning.
 5. In evidence, copy 1-3 short phrases EXACTLY as written in the ticket (verbatim, no paraphrasing)

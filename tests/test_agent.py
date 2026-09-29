@@ -37,11 +37,11 @@ def _user(text):
 
 def test_read_only_tool_runs_then_agent_answers():
     client = FakeClient([
-        _response(calls=[_call("lookup_shipment", tracking_number="SEVEN-2002")]),
+        _response(calls=[_call("lookup_shipment", tracking_number="SHIP-2002")]),
         _response(text="Your parcel is held at customs."),
     ])
     agent = Agent("sys", build_support_tools("c.dupont@paris-store.fr"), client=client)
-    result = agent.run(_user("Where is SEVEN-2002?"))
+    result = agent.run(_user("Where is SHIP-2002?"))
 
     assert result["reply"] == "Your parcel is held at customs."
     tool_step = result["trace"][0]
@@ -72,7 +72,7 @@ def test_side_effecting_tool_is_queued_not_executed():
 
 def test_rejected_action_never_executes():
     client = FakeClient([
-        _response(calls=[_call("request_customs_documents", tracking_number="SEVEN-2002", documents=["commercial invoice"])]),
+        _response(calls=[_call("request_customs_documents", tracking_number="SHIP-2002", documents=["commercial invoice"])]),
         _response(text="Requested."),
     ])
     result = Agent("sys", build_support_tools("c.dupont@paris-store.fr"), client=client).run(_user("help"))

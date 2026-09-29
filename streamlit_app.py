@@ -49,29 +49,29 @@ DEMO_SCENARIOS = {
         "name": "Max Mustermann",
         "email": "max.mustermann@post.de",
         "subject": "Where is my package? Delivery delayed!",
-        "tracking": "SEVEN-1001",
-        "body": "Hi, I have been tracking order SEVEN-1001 for 3 days and the status has not moved from Potsdam. I need this urgently for a birthday party tomorrow or I will cancel the order."
+        "tracking": "SHIP-1001",
+        "body": "Hi, I have been tracking order SHIP-1001 for 3 days and the status has not moved from Potsdam. I need this urgently for a birthday party tomorrow or I will cancel the order."
     },
     "Customs Exception (Paris CDG)": {
         "name": "Claire Dupont",
         "email": "c.dupont@paris-store.fr",
         "subject": "Colis bloqué à la douane / Customs Hold",
-        "tracking": "SEVEN-2002",
-        "body": "Hello, my shipment SEVEN-2002 to Paris is marked with a customs hold exception at CDG airport. Can you check what documents are missing to clear this?"
+        "tracking": "SHIP-2002",
+        "body": "Hello, my shipment SHIP-2002 to Paris is marked with a customs hold exception at CDG airport. Can you check what documents are missing to clear this?"
     },
     "Damaged Goods (Amsterdam)": {
         "name": "Jan de Vries",
         "email": "jan.vries@enterprise.nl",
         "subject": "DAMAGED GOODS ON ARRIVAL - REFUND NEEDED",
-        "tracking": "SEVEN-3003",
-        "body": "Our package SEVEN-3003 arrived completely crushed, torn open, and unusable. Please process an immediate replacement or full refund right away."
+        "tracking": "SHIP-3003",
+        "body": "Our package SHIP-3003 arrived completely crushed, torn open, and unusable. Please process an immediate replacement or full refund right away."
     }
 }
 
 CHAT_STARTERS = [
     "Hi, my parcel hasn't arrived yet and I'm getting worried.",
-    "Mon colis SEVEN-2002 est bloqué à la douane. Quels documents faut-il envoyer ?",
-    "SEVEN-3003 arrived crushed. I want a refund or I'm calling my lawyer.",
+    "Mon colis SHIP-2002 est bloqué à la douane. Quels documents faut-il envoyer ?",
+    "SHIP-3003 arrived crushed. I want a refund or I'm calling my lawyer.",
 ]
 
 COPILOT_STARTERS = [
@@ -186,11 +186,11 @@ with tab_customer:
     st.markdown("##### ⚡ Quick-Fill Demo Presets")
     preset_cols = st.columns(3)
     selected_preset = None
-    if preset_cols[0].button("📦 Delayed Order (SEVEN-1001)", use_container_width=True):
+    if preset_cols[0].button("📦 Delayed Order (SHIP-1001)", use_container_width=True):
         selected_preset = "Delayed Delivery (Potsdam)"
-    if preset_cols[1].button("🛃 Customs Hold (SEVEN-2002)", use_container_width=True):
+    if preset_cols[1].button("🛃 Customs Hold (SHIP-2002)", use_container_width=True):
         selected_preset = "Customs Exception (Paris CDG)"
-    if preset_cols[2].button("💥 Damaged Goods (SEVEN-3003)", use_container_width=True):
+    if preset_cols[2].button("💥 Damaged Goods (SHIP-3003)", use_container_width=True):
         selected_preset = "Damaged Goods (Amsterdam)"
 
     if selected_preset:
@@ -208,9 +208,9 @@ with tab_customer:
 
         col3, col4 = st.columns([2, 1])
         cust_subject = col3.text_input("Subject", value=st.session_state.get("form_subject", "Where is my package? Delivery delayed!"))
-        cust_tracking = col4.text_input("Tracking Code (Optional)", value=st.session_state.get("form_tracking", "SEVEN-1001"))
+        cust_tracking = col4.text_input("Tracking Code (Optional)", value=st.session_state.get("form_tracking", "SHIP-1001"))
 
-        cust_body = st.text_area("Inquiry / Issue Description", value=st.session_state.get("form_body", "Hi, I have been tracking order SEVEN-1001 for 3 days and the status has not moved from Potsdam. I need this urgently for a birthday party tomorrow or I will cancel the order."), height=120)
+        cust_body = st.text_area("Inquiry / Issue Description", value=st.session_state.get("form_body", "Hi, I have been tracking order SHIP-1001 for 3 days and the status has not moved from Potsdam. I need this urgently for a birthday party tomorrow or I will cancel the order."), height=120)
 
         submitted = st.form_submit_button("🚀 Submit Inquiry", use_container_width=True)
 
