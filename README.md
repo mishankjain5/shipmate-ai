@@ -101,7 +101,35 @@ ShipMate AI scores both axes independently and routes on the combination.
 - Webhook alert dispatcher for high-risk customs exceptions and critical delays.
 
 **Full automated test suite**
-- `pytest` coverage across schema integrity, carrier fallback logic, and ML pipeline inference.
+- `pytest` coverage across schema integrity, carrier fallback logic, ML pipeline inference, Shapley explanations, and the agent loop (with a scripted fake LLM, so no API key is needed).
+
+---
+
+## 🧠 Conversational, Agentic & Explainable AI
+
+### 💬 Conversational: AI Chat Assistant
+- Multi-turn chat with memory. The assistant asks for missing details (e.g. a tracking number) instead of guessing, and replies in the customer's language.
+- When the assistant hands off to a human or requests an action, the conversation automatically becomes a triaged ticket with its full transcript.
+- **Ops Copilot**: support staff ask questions about the queue in plain language ("Which tickets have a delay risk above 70%?"), answered only from live ticket data through tools.
+
+### 🤖 Agentic: tool-calling agents with human-in-the-loop
+The LLM decides which tools to call through a Gemini function-calling loop (`app/agent.py`):
+
+| Tool | Effect |
+| :--- | :--- |
+| `lookup_shipment`, `assess_delay_risk`, `check_policy`, `get_customer_history` | Read-only: run automatically |
+| `escalate_to_operations`, `handoff_to_human` | Internal: run automatically |
+| `issue_voucher`, `request_customs_documents` | **Queued for human approval** |
+
+Guardrails: a step limit, business-rule validators (voucher cap of EUR 200, manager approval above EUR 50), customer data bound server-side (the model cannot look up another customer), prompt-injection instructions, retry with backoff on rate limits, and a full reasoning trace for every step.
+
+### 🔍 Explainable: every decision comes with a reason
+- **Exact Shapley values** for the Random Forest. There are only 4 features, so all 16 coalitions are enumerated with no approximation. Base value plus contributions equals the prediction exactly.
+- **Counterfactuals**: "If dwell time were 34h instead of 44h, risk would drop to 16%."
+- **Data-quality warnings**: flags carrier or hub values the model never saw in training.
+- **LLM reasoning and verbatim evidence**: the triage LLM must quote the ticket, and any quote that doesn't appear in the text is discarded automatically (hallucination guard). The quotes are highlighted in the UI.
+- **Escalation decision trace**: lists exactly which rules fired (ML risk, customs hold, LLM urgency).
+- **Plain-English narration**: the LLM turns the Shapley values into an explanation a non-technical agent can read.
 
 ---
 
@@ -116,13 +144,21 @@ logistics-ai-triage/
 │   ├── mock_carrier_api.py   # European parcel routing & scan telemetry
 │   ├── ml_delay_model.py     # Scikit-learn Random Forest delay classifier
 │   ├── notifier.py           # Escalation alert webhook dispatcher
+│   ├── triage.py             # Shared triage pipeline + escalation decision trace
+│   ├── explainability.py     # Exact Shapley values, counterfactuals, data warnings
+│   ├── agent.py              # Tool-calling agent loop, guardrails, approval queue
+│   ├── conversation.py       # Multi-turn customer chat sessions
+│   ├── knowledge_base.py     # Mock support policies & CRM history
+│   ├── actions.py            # Side-effecting actions (run only after approval)
 │   └── main.py               # FastAPI REST backend service
 ├── frontend/                 # Optional React 19 + TypeScript + Tailwind UI
 │   ├── src/
 │   ├── package.json
 │   └── vite.config.ts
 ├── tests/
-│   └── test_triage.py        # Pytest automated test suite
+│   ├── test_triage.py        # Carrier, ML and schema tests
+│   ├── test_explainability.py# Shapley, counterfactual, evidence and decision-trace tests
+│   └── test_agent.py         # Agent loop tests with a scripted fake LLM
 ├── streamlit_app.py          # Unified interactive Streamlit application
 ├── requirements.txt          # Python dependencies
 ├── pytest.ini                # Pytest configuration

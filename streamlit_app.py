@@ -1,15 +1,18 @@
-import streamlit as st
-import pandas as pd
-import uuid
-from datetime import datetime
+import html
 import json
-import os
+import re
+from contextlib import contextmanager
+
+import altair as alt
+import pandas as pd
+import streamlit as st
+from google.genai import types
 
 # Internal project modules
-from app.schemas import TicketPayload, UrgencyLevel
-from app.llm_agent import analyze_ticket, generate_draft_response
-from app.mock_carrier_api import lookup_shipment
-from app.ml_delay_model import predict_delay_risk
+from app.triage import run_triage
+from app.llm_agent import narrate_risk_explanation, LLMUnavailableError
+from app.agent import approve_action, reject_action, investigate_ticket, build_copilot_agent
+from app.conversation import ChatSession
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -27,12 +30,19 @@ st.markdown("""
     .badge-high { background-color: #FEE2E2; color: #991B1B; padding: 4px 8px; border-radius: 6px; font-weight: 600; font-size: 0.75rem; }
     .badge-open { background-color: #FEF3C7; color: #92400E; padding: 4px 8px; border-radius: 6px; font-weight: 600; font-size: 0.75rem; }
     .badge-resolved { background-color: #D1FAE5; color: #065F46; padding: 4px 8px; border-radius: 6px; font-weight: 600; font-size: 0.75rem; }
+    .customer-msg { background-color: #EFF6FF; color: #1E293B; padding: 12px 14px; border-radius: 8px; line-height: 1.5; }
+    .customer-msg mark { background-color: #FDE68A; padding: 0 2px; border-radius: 3px; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- State Management ---
 if "tickets" not in st.session_state:
     st.session_state.tickets = []
+if "chat_session" not in st.session_state:
+    st.session_state.chat_session = None
+if "copilot_contents" not in st.session_state:
+    st.session_state.copilot_contents = []
+    st.session_state.copilot_log = []
 
 DEMO_SCENARIOS = {
     "Delayed Delivery (Potsdam)": {
@@ -58,23 +68,112 @@ DEMO_SCENARIOS = {
     }
 }
 
+CHAT_STARTERS = [
+    "Hi, my parcel hasn't arrived yet and I'm getting worried.",
+    "Mon colis SEVEN-2002 est bloqué à la douane. Quels documents faut-il envoyer ?",
+    "SEVEN-3003 arrived crushed. I want a refund or I'm calling my lawyer.",
+]
+
+COPILOT_STARTERS = [
+    "Give me an overview of the queue.",
+    "Which tickets have a delay risk above 70%?",
+    "Why was the most recent ticket escalated?",
+]
+
+# --- UI helpers ---
+@contextmanager
+def llm_errors():
+    """Shows a friendly message instead of a traceback when Gemini is rate-limited or down."""
+    try:
+        yield
+    except LLMUnavailableError as exc:
+        st.error("⏳ The AI service is busy or unavailable (the Gemini free tier allows 15 requests/minute). "
+                 f"Please wait ~30 seconds and try again.\n\n`{exc}`")
+        st.stop()
+
+
+def render_trace(trace: list, title: str = "Agent reasoning trace"):
+    if not trace:
+        return
+    icons = {"tool": "🔧", "queued": "⏸️", "blocked": "⛔", "error": "⚠️", "answer": "💬", "limit": "🛑"}
+    tool_steps = [s for s in trace if s["type"] != "answer"]
+    with st.expander(f"🧭 {title} ({len(tool_steps)} tool calls)"):
+        for s in trace:
+            icon = icons.get(s["type"], "•")
+            if s["type"] == "answer":
+                st.markdown(f"{icon} **Step {s['step']}** - final answer")
+                continue
+            args = ", ".join(f"{k}={v!r}" for k, v in s["args"].items())
+            label = {"queued": "queued for human approval", "blocked": "blocked by guardrail"}.get(s["type"], "")
+            st.markdown(f"{icon} **Step {s['step']}** - `{s['tool']}({args})` {label}")
+            st.code(json.dumps(s["result"], indent=1, default=str)[:1200], language="json")
+
+
+def render_pending_actions(actions: list, key_prefix: str):
+    if not actions:
+        return
+    st.markdown("🛡️ **Actions requested by the AI agent** (human-in-the-loop)")
+    for a in actions:
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([3, 1, 1])
+            args = {k: v for k, v in a["args"].items() if k != "customer_email"}
+            manager = " · 👔 needs manager" if a.get("requires_manager") else ""
+            c1.markdown(f"`{a['action_id']}` **{a['tool']}** - `{a['status']}`{manager}")
+            c1.caption(json.dumps(args, default=str))
+            if a["status"] == "PENDING_APPROVAL":
+                if c2.button("Approve", key=f"{key_prefix}_ap_{a['action_id']}", type="primary", use_container_width=True):
+                    approve_action(a["action_id"])
+                    st.rerun()
+                if c3.button("Reject", key=f"{key_prefix}_rj_{a['action_id']}", use_container_width=True):
+                    reject_action(a["action_id"])
+                    st.rerun()
+            elif a.get("result"):
+                c1.success(f"Result: {a['result']}")
+
+
+def highlight_evidence(text: str, evidence: list) -> str:
+    safe = html.escape(text)
+    for quote in evidence:
+        pattern = re.compile(re.escape(html.escape(quote.strip())), re.IGNORECASE)
+        safe = pattern.sub(lambda m: f"<mark>{m.group(0)}</mark>", safe)
+    return safe.replace("\n", "<br>")
+
+
+def shapley_chart(explanation: dict):
+    df = pd.DataFrame([
+        {"factor": f"{c['label']} = {c['value']}", "impact": c["impact_pct_points"]}
+        for c in explanation["contributions"]
+    ])
+    chart = alt.Chart(df).mark_bar().encode(
+        x=alt.X("impact:Q", title="Impact on delay risk (percentage points)"),
+        y=alt.Y("factor:N", sort=None, title=None),
+        color=alt.condition(alt.datum.impact > 0, alt.value("#DC2626"), alt.value("#059669")),
+        tooltip=["factor", "impact"],
+    ).properties(height=170)
+    st.altair_chart(chart, use_container_width=True)
+
+
 # --- Sidebar ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2830/2830312.png", width=60)
     st.markdown("### **ShipMate AI Platform**")
-    st.caption("Hybrid LLM & Scikit-Learn Triage Engine")
-    
+    st.caption("Conversational · Agentic · Explainable")
+
     st.divider()
     st.markdown("**System Metrics**")
     st.metric("Total Tickets Processed", len(st.session_state.tickets))
     open_tickets = len([t for t in st.session_state.tickets if t["status"] == "OPEN"])
     st.metric("Pending Open Tickets", open_tickets)
-    
+    pending = sum(a["status"] == "PENDING_APPROVAL" for t in st.session_state.tickets for a in t.get("pending_actions", []))
+    st.metric("Actions Awaiting Approval", pending)
+
     st.divider()
-    st.caption("Built with Gemini Flash + Scikit-Learn Random Forest + Streamlit.")
+    st.caption("Built with Gemini (tool calling) + Scikit-Learn Random Forest + exact Shapley explanations + Streamlit.")
 
 # --- Navigation Tabs ---
-tab_customer, tab_agent = st.tabs(["👤 Customer Support Portal", "🎧 Support Agent Workspace"])
+tab_customer, tab_chat, tab_agent, tab_copilot = st.tabs(
+    ["👤 Customer Support Portal", "💬 AI Chat Assistant", "🎧 Support Agent Workspace", "🧠 Ops Copilot"]
+)
 
 # ==============================================================================
 # TAB 1: CUSTOMER PORTAL
@@ -116,84 +215,93 @@ with tab_customer:
         submitted = st.form_submit_button("🚀 Submit Inquiry", use_container_width=True)
 
     if submitted:
-        with st.spinner("🤖 Triaging ticket through Gemini LLM and scoring ML delay risk..."):
-            ticket_id = f"TICK-{uuid.uuid4().hex[:6].upper()}"
-            payload = TicketPayload(
-                ticket_id=ticket_id,
+        with st.spinner("🤖 Triaging ticket through Gemini LLM and scoring ML delay risk..."), llm_errors():
+            ticket_record = run_triage(
+                sender_name=cust_name,
                 sender_email=cust_email,
                 subject=cust_subject,
-                body=cust_body
+                body=cust_body,
+                tracking_number=cust_tracking or None,
             )
-
-            # 1. LLM Extraction
-            analysis = analyze_ticket(payload)
-            tracking_id = cust_tracking or analysis.tracking_number
-            if tracking_id:
-                analysis.tracking_number = tracking_id
-
-            # 2. Carrier Telemetry
-            carrier_info = lookup_shipment(tracking_id)
-
-            # 3. Tabular ML Risk Prediction
-            carrier_name = carrier_info.get("carrier", "DHL Express") if carrier_info else "DHL Express"
-            hub_name = carrier_info.get("last_hub", "Potsdam Sorting Facility") if carrier_info else "Potsdam Sorting Facility"
-            simulated_dwell = 44.0 if (carrier_info and carrier_info.get("status") in ["IN_TRANSIT", "CUSTOMS_HOLD"]) else 12.0
-
-            ml_res = predict_delay_risk(
-                carrier=carrier_name,
-                last_hub=hub_name,
-                dwell_time_hours=simulated_dwell,
-                is_cross_border=1
-            )
-
-            # 4. Draft Reply
-            draft = generate_draft_response(payload, analysis, carrier_info or {"note": "No carrier records"})
-
-            ticket_record = {
-                "ticket_id": ticket_id,
-                "created_at": datetime.now().strftime("%H:%M:%S"),
-                "customer_name": cust_name,
-                "customer_email": cust_email,
-                "subject": cust_subject,
-                "body": cust_body,
-                "analysis": analysis.model_dump(),
-                "carrier_status": carrier_info,
-                "ml_prediction": ml_res,
-                "draft_reply": draft,
-                "status": "OPEN"
-            }
-
             st.session_state.tickets.insert(0, ticket_record)
-            st.success(f"✅ Ticket Created Successfully! Assigned ID: **{ticket_id}**. Go to the **Agent Workspace** tab to review.")
+            st.success(f"✅ Ticket Created Successfully! Assigned ID: **{ticket_record['ticket_id']}**. Go to the **Agent Workspace** tab to review.")
 
 # ==============================================================================
-# TAB 2: AGENT WORKSPACE
+# TAB 2: CONVERSATIONAL AI CHAT ASSISTANT
+# ==============================================================================
+with tab_chat:
+    st.markdown("<div class='main-header'>AI Chat Assistant</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub-header'>A multi-turn assistant that remembers the conversation, asks for missing details, "
+                "calls tools (carrier lookup, ML risk, policy, CRM) and requests human approval before any real-world action.</div>",
+                unsafe_allow_html=True)
+
+    persona_names = {s["name"]: s["email"] for s in DEMO_SCENARIOS.values()}
+    pc1, pc2 = st.columns([3, 1])
+    persona = pc1.selectbox("Chatting as customer", list(persona_names), key="chat_persona")
+    if pc2.button("🔄 New conversation", use_container_width=True) or st.session_state.chat_session is None \
+            or st.session_state.chat_session.customer_name != persona:
+        st.session_state.chat_session = ChatSession(
+            persona, persona_names[persona],
+            on_ticket_created=lambda t: st.session_state.tickets.insert(0, t),
+        )
+
+    session: ChatSession = st.session_state.chat_session
+
+    if not session.transcript:
+        st.caption("Try a starter message:")
+        starter_cols = st.columns(len(CHAT_STARTERS))
+        for i, starter in enumerate(CHAT_STARTERS):
+            if starter_cols[i].button(starter, key=f"starter_{i}", use_container_width=True):
+                st.session_state.pending_chat = starter
+                st.rerun()
+
+    for msg in session.transcript:
+        with st.chat_message("user" if msg["role"] == "customer" else "assistant"):
+            st.markdown(msg["text"])
+            if msg["role"] == "assistant":
+                render_trace(msg.get("trace", []))
+
+    if session.handoff_summary:
+        st.warning(f"🙋 Handed off to a human agent. Summary: {session.handoff_summary}")
+    if session.ticket:
+        st.info(f"📨 Conversation converted into ticket **{session.ticket['ticket_id']}**. See the Agent Workspace.")
+    render_pending_actions(session.pending_actions, key_prefix="chat")
+
+    user_text = st.chat_input("Type your message...", key="chat_input") or st.session_state.pop("pending_chat", None)
+    if user_text:
+        with st.spinner("🤖 Thinking and calling tools..."), llm_errors():
+            session.send(user_text)
+        st.rerun()
+
+# ==============================================================================
+# TAB 3: AGENT WORKSPACE
 # ==============================================================================
 with tab_agent:
     st.markdown("<div class='main-header'>Support Agent Workspace</div>", unsafe_allow_html=True)
-    st.markdown("<div class='sub-header'>Live queue with real-time carrier telemetry, ML SLA breach risk, and AI draft generation.</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub-header'>Live queue with real-time carrier telemetry, explainable ML risk, AI investigations and draft generation.</div>", unsafe_allow_html=True)
 
     if not st.session_state.tickets:
-        st.info("No tickets in the queue yet. Submit a test ticket from the Customer Support Portal tab.")
+        st.info("No tickets in the queue yet. Submit a ticket from the Customer Support Portal or chat with the AI Chat Assistant.")
     else:
         col_queue, col_dossier = st.columns([1, 1.6])
 
         # --- LEFT: Live Queue List ---
         with col_queue:
             st.markdown(f"#### 📥 Incoming Queue ({len(st.session_state.tickets)})")
-            
-            selected_ticket = None
-            for idx, t in enumerate(st.session_state.tickets):
-                is_selected = st.session_state.get("selected_ticket_id") == t["ticket_id"] or idx == 0
-                
+
+            for t in st.session_state.tickets:
                 with st.container(border=True):
                     header_c1, header_c2 = st.columns([2, 1])
-                    header_c1.markdown(f"**`{t['ticket_id']}`** — {t['created_at']}")
+                    source_icon = "💬" if t.get("source") == "chat" else "📝"
+                    header_c1.markdown(f"{source_icon} **`{t['ticket_id']}`** — {t['created_at']}")
                     urg_color = "red" if t["analysis"]["urgency"] in ["high", "critical"] else "blue"
                     header_c2.markdown(f":{urg_color}[**{t['analysis']['urgency'].upper()}**] | `{t['status']}`")
 
                     st.markdown(f"**{t['subject']}**")
                     st.caption(f"{t['customer_name']} ({t['customer_email']})")
+                    waiting = sum(a["status"] == "PENDING_APPROVAL" for a in t.get("pending_actions", []))
+                    if waiting:
+                        st.caption(f"⏸️ {waiting} action(s) awaiting approval")
 
                     if st.button("Inspect Dossier & Draft", key=f"btn_{t['ticket_id']}", use_container_width=True):
                         st.session_state.selected_ticket_id = t["ticket_id"]
@@ -202,15 +310,24 @@ with tab_agent:
         # Selected Ticket Reference
         sel_id = st.session_state.get("selected_ticket_id", st.session_state.tickets[0]["ticket_id"])
         selected_ticket = next((t for t in st.session_state.tickets if t["ticket_id"] == sel_id), st.session_state.tickets[0])
+        analysis = selected_ticket["analysis"]
 
         # --- RIGHT: Full AI & ML Dossier ---
         with col_dossier:
             st.markdown(f"#### 🔎 Ticket Dossier: `{selected_ticket['ticket_id']}`")
-            
+
             with st.container(border=True):
                 st.markdown(f"**Subject:** {selected_ticket['subject']}")
-                st.caption(f"**From:** {selected_ticket['customer_name']} <{selected_ticket['customer_email']}>")
-                st.info(f"💬 **Customer Message:**\n\n{selected_ticket['body']}")
+                st.caption(f"**From:** {selected_ticket['customer_name']} <{selected_ticket['customer_email']}> · "
+                           f"**Category:** `{analysis['category']}` · **Language:** `{analysis.get('language', 'en')}`")
+                st.markdown("💬 **Customer Message** (highlighted = evidence the AI used)")
+                st.markdown(f"<div class='customer-msg'>{highlight_evidence(selected_ticket['body'], analysis.get('evidence', []))}</div>",
+                            unsafe_allow_html=True)
+                if selected_ticket.get("transcript"):
+                    with st.expander("🗨️ Full chat transcript"):
+                        for m in selected_ticket["transcript"]:
+                            who = "Customer" if m["role"] == "customer" else "ShipMate AI"
+                            st.markdown(f"**{who}:** {m['text']}")
 
             # 3-Column Telemetry
             m1, m2, m3 = st.columns(3)
@@ -236,7 +353,70 @@ with tab_agent:
             with m3:
                 with st.container(border=True):
                     st.markdown("🤖 **AI Directive**")
-                    st.warning(selected_ticket["analysis"]["action_required"])
+                    st.warning(analysis["action_required"])
+
+            # --- Explainable AI ---
+            with st.container(border=True):
+                st.markdown("🔍 **Why did the AI decide this?**")
+                x_ml, x_cf, x_llm, x_dec = st.tabs(["ML risk factors", "What-if", "LLM reasoning", "Escalation trace"])
+                explanation = selected_ticket.get("ml_explanation")
+
+                with x_ml:
+                    if explanation:
+                        st.caption(f"Average risk {explanation['base_value']}% → this shipment {explanation['prediction']}%. "
+                                   f"{explanation['method']}.")
+                        shapley_chart(explanation)
+                        for w in explanation["warnings"]:
+                            st.error(f"⚠️ Data quality: {w}")
+                        for n in explanation.get("notes", []):
+                            st.caption(f"ℹ️ {n}")
+                        if selected_ticket.get("ml_narrative"):
+                            st.info(selected_ticket["ml_narrative"])
+                        elif st.button("🗣️ Explain in plain English", key=f"narrate_{selected_ticket['ticket_id']}"):
+                            with st.spinner("Translating the model's reasoning..."), llm_errors():
+                                selected_ticket["ml_narrative"] = narrate_risk_explanation(ml, explanation)
+                            st.rerun()
+
+                with x_cf:
+                    if explanation:
+                        for cf in explanation["counterfactuals"]:
+                            st.markdown(f"- {cf}")
+
+                with x_llm:
+                    st.markdown(f"**Urgency:** `{analysis['urgency'].upper()}`")
+                    st.markdown(analysis.get("urgency_reasoning") or "_No reasoning returned._")
+                    if analysis.get("evidence"):
+                        st.markdown("**Verbatim evidence** (quotes not found in the ticket are discarded automatically):")
+                        for q in analysis["evidence"]:
+                            st.markdown(f"> {q}")
+
+                with x_dec:
+                    reasons = selected_ticket.get("escalation_reasons", [])
+                    if reasons:
+                        st.markdown(f"**Decision:** `{selected_ticket.get('action_taken')}` because:")
+                        for r in reasons:
+                            st.markdown(f"- ✅ {r}")
+                    else:
+                        st.markdown("**Decision:** `AUTO_DRAFT_CREATED` - no escalation rule fired "
+                                    "(ML risk < 70%, no customs hold, urgency below HIGH).")
+
+            # --- Agentic AI ---
+            with st.container(border=True):
+                st.markdown("🤖 **AI Investigation Agent**")
+                st.caption("The agent decides which tools to call (carrier, ML risk, CRM history, policy) and may request actions for your approval.")
+                if st.button("▶️ Run AI investigation", key=f"inv_{selected_ticket['ticket_id']}"):
+                    with st.spinner("Agent is investigating..."), llm_errors():
+                        result = investigate_ticket(selected_ticket)
+                    selected_ticket["agent_summary"] = result["reply"]
+                    selected_ticket.setdefault("agent_trace", []).extend(result["trace"])
+                    selected_ticket.setdefault("pending_actions", []).extend(result["new_actions"])
+                    st.rerun()
+                if selected_ticket.get("handoff_summary"):
+                    st.warning(f"🙋 Chat handoff summary: {selected_ticket['handoff_summary']}")
+                if selected_ticket.get("agent_summary"):
+                    st.markdown(selected_ticket["agent_summary"])
+                render_trace(selected_ticket.get("agent_trace", []))
+                render_pending_actions(selected_ticket.get("pending_actions", []), key_prefix=f"ws_{selected_ticket['ticket_id']}")
 
             # AI Draft Reply Area
             with st.container(border=True):
@@ -259,3 +439,44 @@ with tab_agent:
                     selected_ticket["draft_reply"] = agent_reply_text
                     st.toast(f"Reply sent for {selected_ticket['ticket_id']}!", icon="✅")
                     st.rerun()
+
+# ==============================================================================
+# TAB 4: OPS COPILOT
+# ==============================================================================
+with tab_copilot:
+    st.markdown("<div class='main-header'>Ops Copilot</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub-header'>Ask questions about the support queue in plain language. "
+                "The copilot answers only from live ticket data via tools.</div>", unsafe_allow_html=True)
+
+    if st.button("🧹 Clear copilot conversation"):
+        st.session_state.copilot_contents = []
+        st.session_state.copilot_log = []
+        st.rerun()
+
+    if not st.session_state.copilot_log:
+        cols = st.columns(len(COPILOT_STARTERS))
+        for i, q in enumerate(COPILOT_STARTERS):
+            if cols[i].button(q, key=f"cop_starter_{i}", use_container_width=True):
+                st.session_state.pending_copilot = q
+                st.rerun()
+
+    for entry in st.session_state.copilot_log:
+        with st.chat_message("user"):
+            st.markdown(entry["question"])
+        with st.chat_message("assistant"):
+            st.markdown(entry["answer"])
+            render_trace(entry["trace"], title="Copilot tool calls")
+
+    question = st.chat_input("Ask the copilot...", key="copilot_input") or st.session_state.pop("pending_copilot", None)
+    if question:
+        contents = st.session_state.copilot_contents
+        checkpoint = len(contents)
+        contents.append(types.Content(role="user", parts=[types.Part(text=question)]))
+        with st.spinner("Querying the ticket queue..."), llm_errors():
+            try:
+                result = build_copilot_agent(lambda: st.session_state.tickets).run(contents)
+            except LLMUnavailableError:
+                del contents[checkpoint:]  # roll back so the history stays valid for a retry
+                raise
+        st.session_state.copilot_log.append({"question": question, "answer": result["reply"], "trace": result["trace"]})
+        st.rerun()

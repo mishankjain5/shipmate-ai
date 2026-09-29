@@ -28,6 +28,9 @@ class ExtractedTicketData(BaseModel):
     customer_id: Optional[str] = Field(default=None, description="Customer reference or account ID")
     summary: str = Field(description="One sentence summary of the customer's problem")
     action_required: str = Field(description="Recommended next operational action")
+    language: str = Field(default="en", description="ISO 639-1 code of the language the customer wrote in")
+    urgency_reasoning: str = Field(default="", description="One or two sentences explaining why this urgency level was chosen")
+    evidence: list[str] = Field(default_factory=list, description="Short verbatim quotes from the ticket that justify the category and urgency")
 
 class TriageResponse(BaseModel):
     ticket_id: str

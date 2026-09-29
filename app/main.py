@@ -3,22 +3,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from dotenv import load_dotenv
-import os
-import uuid
-from datetime import datetime
 
-from app.schemas import TicketPayload, TriageResponse, UrgencyLevel
-from app.llm_agent import analyze_ticket, generate_draft_response
-from app.mock_carrier_api import lookup_shipment
-from app.notifier import send_slack_alert
-from app.ml_delay_model import predict_delay_risk  # <--- Import ML module
+from app.triage import run_triage
+from app.llm_agent import narrate_risk_explanation
+from app.agent import PENDING_ACTIONS, approve_action, reject_action, investigate_ticket, build_copilot_agent
+from app.conversation import ChatSession
+from google.genai import types
 
 load_dotenv()
 
 app = FastAPI(
     title="ShipMate AI - Hybrid LLM + ML Logistics Engine",
-    description="Dual Portal Hub combining Scikit-Learn Predictive Delay Scoring and LLM Entity Extraction",
-    version="2.1.0"
+    description="Conversational, agentic and explainable triage: Gemini tool-calling agents, "
+                "Scikit-Learn delay scoring with Shapley explanations, and human-approved actions",
+    version="3.0.0"
 )
 
 app.add_middleware(
@@ -30,6 +28,8 @@ app.add_middleware(
 )
 
 TICKETS_STORE = []
+CHAT_SESSIONS: dict[str, ChatSession] = {}
+COPILOT_HISTORY: list = []
 
 class CustomerSubmission(BaseModel):
     sender_name: str
@@ -43,75 +43,33 @@ class TicketActionPayload(BaseModel):
     final_reply: Optional[str] = None
     status: str
 
+class ChatMessage(BaseModel):
+    message: str
+    session_id: Optional[str] = None
+    customer_name: str = "Guest"
+    customer_email: str = "guest@example.com"
+
+class CopilotQuestion(BaseModel):
+    question: str
+    reset: bool = False
+
+def _find_ticket(ticket_id: str) -> dict:
+    for ticket in TICKETS_STORE:
+        if ticket["ticket_id"] == ticket_id:
+            return ticket
+    raise HTTPException(status_code=404, detail="Ticket not found")
+
 @app.post("/api/customer/submit")
 def customer_submit_ticket(submission: CustomerSubmission):
-    ticket_id = f"TICK-{uuid.uuid4().hex[:6].upper()}"
-    
-    payload = TicketPayload(
-        ticket_id=ticket_id,
+    ticket_record = run_triage(
+        sender_name=submission.sender_name,
         sender_email=submission.sender_email,
         subject=submission.subject,
-        body=submission.body
+        body=submission.body,
+        tracking_number=submission.tracking_number,
     )
-    
-    # 1. LLM Structured NLP Analysis
-    analysis = analyze_ticket(payload)
-    tracking_to_check = submission.tracking_number or analysis.tracking_number
-    if tracking_to_check:
-        analysis.tracking_number = tracking_to_check
-
-    # 2. Carrier Telemetry Lookup
-    carrier_info = lookup_shipment(analysis.tracking_number)
-    
-    # 3. Classical ML Tabular Inference (Predicting Delay Likelihood)
-    carrier_name = carrier_info.get("carrier", "DHL Express") if carrier_info else "DHL Express"
-    hub_name = carrier_info.get("last_hub", "Potsdam Sorting Facility") if carrier_info else "Potsdam Sorting Facility"
-    
-    # Simulate realistic dwell time based on whether tracking is stalled
-    simulated_dwell_time = 44.0 if (carrier_info and carrier_info.get("status") in ["IN_TRANSIT", "CUSTOMS_HOLD"]) else 12.0
-    
-    ml_prediction = predict_delay_risk(
-        carrier=carrier_name,
-        last_hub=hub_name,
-        dwell_time_hours=simulated_dwell_time,
-        is_cross_border=1
-    )
-
-    # 4. Decision Engine: Escalation Logic combining LLM + ML + Carrier Exception
-    is_high_ml_risk = ml_prediction["risk_tier"] == "CRITICAL_RISK"
-    is_customs_hold = carrier_info and carrier_info.get("status") == "CUSTOMS_HOLD"
-    is_urgent_tone = analysis.urgency in [UrgencyLevel.HIGH, UrgencyLevel.CRITICAL]
-
-    if is_high_ml_risk or is_customs_hold or is_urgent_tone:
-        send_slack_alert(
-            ticket_id=ticket_id,
-            summary=f"[ML Risk: {ml_prediction['delay_probability']}%] {analysis.summary}",
-            urgency=analysis.urgency.value,
-            carrier_status=carrier_info
-        )
-        action_taken = "ESCALATED_TO_SLACK"
-    else:
-        action_taken = "AUTO_DRAFT_CREATED"
-        
-    draft = generate_draft_response(payload, analysis, carrier_info or {"note": "No shipment record found"})
-
-    ticket_record = {
-        "ticket_id": ticket_id,
-        "created_at": datetime.now().strftime("%H:%M:%S"),
-        "customer_name": submission.sender_name,
-        "customer_email": submission.sender_email,
-        "subject": submission.subject,
-        "body": submission.body,
-        "analysis": analysis.model_dump(),
-        "carrier_status": carrier_info,
-        "ml_prediction": ml_prediction,  # <--- ML output included in response
-        "action_taken": action_taken,
-        "draft_reply": draft,
-        "status": "OPEN"
-    }
-    
     TICKETS_STORE.insert(0, ticket_record)
-    return {"status": "success", "ticket_id": ticket_id, "ml_prediction": ml_prediction}
+    return {"status": "success", "ticket_id": ticket_record["ticket_id"], "ml_prediction": ticket_record["ml_prediction"]}
 
 @app.get("/api/agent/tickets")
 def get_all_tickets():
@@ -119,10 +77,77 @@ def get_all_tickets():
 
 @app.post("/api/agent/update-ticket")
 def update_ticket_status(payload: TicketActionPayload):
-    for ticket in TICKETS_STORE:
-        if ticket["ticket_id"] == payload.ticket_id:
-            ticket["status"] = payload.status
-            if payload.final_reply:
-                ticket["final_reply"] = payload.final_reply
-            return {"status": "success", "ticket": ticket}
-    raise HTTPException(status_code=404, detail="Ticket not found")
+    ticket = _find_ticket(payload.ticket_id)
+    ticket["status"] = payload.status
+    if payload.final_reply:
+        ticket["final_reply"] = payload.final_reply
+    return {"status": "success", "ticket": ticket}
+
+# --- Explainable AI ---
+
+@app.get("/api/agent/tickets/{ticket_id}/explanation")
+def get_explanation(ticket_id: str, narrate: bool = False):
+    ticket = _find_ticket(ticket_id)
+    if narrate and "ml_narrative" not in ticket:
+        ticket["ml_narrative"] = narrate_risk_explanation(ticket["ml_prediction"], ticket["ml_explanation"])
+    return {
+        "ml_prediction": ticket["ml_prediction"],
+        "ml_explanation": ticket["ml_explanation"],
+        "ml_narrative": ticket.get("ml_narrative"),
+        "llm_reasoning": ticket["analysis"].get("urgency_reasoning"),
+        "llm_evidence": ticket["analysis"].get("evidence", []),
+        "escalation_reasons": ticket.get("escalation_reasons", []),
+    }
+
+# --- Agentic AI ---
+
+@app.post("/api/agent/tickets/{ticket_id}/investigate")
+def investigate(ticket_id: str):
+    ticket = _find_ticket(ticket_id)
+    result = investigate_ticket(ticket)
+    ticket["agent_summary"] = result["reply"]
+    ticket.setdefault("agent_trace", []).extend(result["trace"])
+    ticket.setdefault("pending_actions", []).extend(result["new_actions"])
+    return result
+
+@app.get("/api/actions/pending")
+def list_pending_actions():
+    return [a for a in PENDING_ACTIONS.values() if a["status"] == "PENDING_APPROVAL"]
+
+@app.post("/api/actions/{action_id}/approve")
+def approve(action_id: str):
+    if action_id not in PENDING_ACTIONS:
+        raise HTTPException(status_code=404, detail="Action not found")
+    return approve_action(action_id)
+
+@app.post("/api/actions/{action_id}/reject")
+def reject(action_id: str):
+    if action_id not in PENDING_ACTIONS:
+        raise HTTPException(status_code=404, detail="Action not found")
+    return reject_action(action_id)
+
+# --- Conversational AI ---
+
+@app.post("/api/chat")
+def chat(msg: ChatMessage):
+    session = CHAT_SESSIONS.get(msg.session_id) if msg.session_id else None
+    if session is None:
+        session = ChatSession(msg.customer_name, msg.customer_email,
+                              on_ticket_created=lambda t: TICKETS_STORE.insert(0, t))
+        CHAT_SESSIONS[session.session_id] = session
+    turn = session.send(msg.message)
+    return {
+        "session_id": session.session_id,
+        "reply": turn["reply"],
+        "trace": turn["trace"],
+        "pending_actions": session.pending_actions,
+        "handed_off": session.handoff_summary is not None,
+        "ticket_id": session.ticket["ticket_id"] if session.ticket else None,
+    }
+
+@app.post("/api/copilot")
+def copilot(q: CopilotQuestion):
+    if q.reset:
+        COPILOT_HISTORY.clear()
+    COPILOT_HISTORY.append(types.Content(role="user", parts=[types.Part(text=q.question)]))
+    return build_copilot_agent(lambda: TICKETS_STORE).run(COPILOT_HISTORY)

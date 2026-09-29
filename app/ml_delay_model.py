@@ -86,6 +86,14 @@ if not os.path.exists(MODEL_PATH):
 else:
     ml_pipeline = joblib.load(MODEL_PATH)
 
+def risk_tier(prob_delayed: float) -> str:
+    """Maps a delay probability (0-1) to an operational risk tier."""
+    if prob_delayed >= 0.70:
+        return "CRITICAL_RISK"
+    if prob_delayed >= 0.40:
+        return "MODERATE_RISK"
+    return "LOW_RISK"
+
 def predict_delay_risk(carrier: str, last_hub: str, dwell_time_hours: float, is_cross_border: int = 1) -> dict:
     """Infers delay probability using the serialized scikit-learn model."""
     input_df = pd.DataFrame([{
@@ -94,19 +102,12 @@ def predict_delay_risk(carrier: str, last_hub: str, dwell_time_hours: float, is_
         "dwell_time_hours": float(dwell_time_hours),
         "is_cross_border": int(is_cross_border)
     }])
-    
+
     # Calculate probability of delay (Class 1)
     prob_delayed = float(ml_pipeline.predict_proba(input_df)[0][1])
-    
-    if prob_delayed >= 0.70:
-        risk_tier = "CRITICAL_RISK"
-    elif prob_delayed >= 0.40:
-        risk_tier = "MODERATE_RISK"
-    else:
-        risk_tier = "LOW_RISK"
 
     return {
         "delay_probability": round(prob_delayed * 100, 1),
-        "risk_tier": risk_tier,
+        "risk_tier": risk_tier(prob_delayed),
         "model_used": "RandomForest (scikit-learn)"
     }
