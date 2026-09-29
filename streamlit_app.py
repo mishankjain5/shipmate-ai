@@ -181,9 +181,6 @@ def render_sidebar_metrics():
         st.metric("Actions Awaiting Approval", pending,
                   help="Vouchers or document requests the AI agent has asked for, waiting for a human to approve.")
 
-        st.divider()
-        st.caption("Built with Gemini (tool calling) + Scikit-Learn Random Forest + exact Shapley explanations + Streamlit.")
-
 # --- Navigation Tabs ---
 tab_customer, tab_chat, tab_agent, tab_copilot = st.tabs(
     ["👤 Customer Support Portal", "💬 AI Chat Assistant", "🎧 Support Agent Workspace", "🧠 Ops Copilot"]
