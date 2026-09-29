@@ -214,25 +214,32 @@ with tab_customer:
 
     with st.form("customer_ticket_form"):
         col1, col2 = st.columns(2)
-        cust_name = col1.text_input("Your Name", value=st.session_state.get("form_name", "Max Mustermann"))
-        cust_email = col2.text_input("Your Email", value=st.session_state.get("form_email", "max.mustermann@post.de"))
+        cust_name = col1.text_input("Your Name", value=st.session_state.get("form_name", ""), placeholder="e.g. Anna Schmidt")
+        cust_email = col2.text_input("Your Email", value=st.session_state.get("form_email", ""), placeholder="e.g. anna@example.de")
 
         col3, col4 = st.columns([2, 1])
-        cust_subject = col3.text_input("Subject", value=st.session_state.get("form_subject", "Where is my package? Delivery delayed!"))
-        cust_tracking = col4.text_input("Tracking Code (Optional)", value=st.session_state.get("form_tracking", "SHIP-1001"))
+        cust_subject = col3.text_input("Subject", value=st.session_state.get("form_subject", ""), placeholder="e.g. My parcel hasn't arrived")
+        cust_tracking = col4.text_input("Tracking Code (Optional)", value=st.session_state.get("form_tracking", ""), placeholder="e.g. SHIP-1001")
 
-        cust_body = st.text_area("Inquiry / Issue Description", value=st.session_state.get("form_body", "Hi, I have been tracking order SHIP-1001 for 3 days and the status has not moved from Potsdam. I need this urgently for a birthday party tomorrow or I will cancel the order."), height=120)
+        cust_body = st.text_area("Inquiry / Issue Description", value=st.session_state.get("form_body", ""), height=120,
+                                 placeholder="Describe the problem. If you know the tracking number, you can also mention it here.")
 
         submitted = st.form_submit_button("🚀 Submit Inquiry", use_container_width=True)
 
-    if submitted:
+    missing = [label for label, value in [("name", cust_name), ("email", cust_email), ("subject", cust_subject),
+                                          ("issue description", cust_body)] if not value.strip()]
+    if submitted and missing:
+        st.error(f"Please fill in your {', '.join(missing)}.")
+    elif submitted and not EMAIL_PATTERN.match(cust_email.strip().lower()):
+        st.error("Please enter a valid email address.")
+    elif submitted:
         with st.spinner("🤖 Triaging ticket through Gemini LLM and scoring ML delay risk..."), llm_errors():
             ticket_record = run_triage(
-                sender_name=cust_name,
-                sender_email=cust_email,
-                subject=cust_subject,
-                body=cust_body,
-                tracking_number=cust_tracking or None,
+                sender_name=cust_name.strip(),
+                sender_email=cust_email.strip(),
+                subject=cust_subject.strip(),
+                body=cust_body.strip(),
+                tracking_number=cust_tracking.strip() or None,
             )
             st.session_state.tickets.insert(0, ticket_record)
             st.success(f"✅ Ticket Created Successfully! Assigned ID: **{ticket_record['ticket_id']}**. Go to the **Agent Workspace** tab to review.")
