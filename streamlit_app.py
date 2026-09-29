@@ -89,6 +89,7 @@ def llm_errors():
     except LLMUnavailableError as exc:
         st.error("⏳ The AI service is busy or unavailable (the Gemini free tier allows 15 requests/minute). "
                  f"Please wait ~30 seconds and try again.\n\n`{exc}`")
+        render_sidebar_metrics()
         st.stop()
 
 
@@ -158,17 +159,23 @@ with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2830/2830312.png", width=60)
     st.markdown("### **ShipMate AI Platform**")
     st.caption("Conversational · Agentic · Explainable")
+    # Reserved slot: filled at the END of the script run (see render_sidebar_metrics),
+    # because Streamlit executes top-to-bottom and tickets are created further down.
+    metrics_slot = st.container()
 
-    st.divider()
-    st.markdown("**System Metrics**")
-    st.metric("Total Tickets Processed", len(st.session_state.tickets))
-    open_tickets = len([t for t in st.session_state.tickets if t["status"] == "OPEN"])
-    st.metric("Pending Open Tickets", open_tickets)
-    pending = sum(a["status"] == "PENDING_APPROVAL" for t in st.session_state.tickets for a in t.get("pending_actions", []))
-    st.metric("Actions Awaiting Approval", pending)
 
-    st.divider()
-    st.caption("Built with Gemini (tool calling) + Scikit-Learn Random Forest + exact Shapley explanations + Streamlit.")
+def render_sidebar_metrics():
+    with metrics_slot:
+        st.divider()
+        st.markdown("**System Metrics**")
+        st.metric("Total Tickets Processed", len(st.session_state.tickets))
+        open_tickets = len([t for t in st.session_state.tickets if t["status"] == "OPEN"])
+        st.metric("Pending Open Tickets", open_tickets)
+        pending = sum(a["status"] == "PENDING_APPROVAL" for t in st.session_state.tickets for a in t.get("pending_actions", []))
+        st.metric("Actions Awaiting Approval", pending)
+
+        st.divider()
+        st.caption("Built with Gemini (tool calling) + Scikit-Learn Random Forest + exact Shapley explanations + Streamlit.")
 
 # --- Navigation Tabs ---
 tab_customer, tab_chat, tab_agent, tab_copilot = st.tabs(
@@ -480,3 +487,6 @@ with tab_copilot:
                 raise
         st.session_state.copilot_log.append({"question": question, "answer": result["reply"], "trace": result["trace"]})
         st.rerun()
+
+# Rendered last so the metrics reflect tickets created during this run
+render_sidebar_metrics()
